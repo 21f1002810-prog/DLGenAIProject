@@ -1,0 +1,13 @@
+librosa
+numpy
+pandas
+matplotlib
+seaborn
+scikit-learn
+torch
+torchaudio
+wandb
+tqdm
+playsound
+soundfile
+sounddevice
