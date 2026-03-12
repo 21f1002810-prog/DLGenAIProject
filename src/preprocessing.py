@@ -1,6 +1,6 @@
 import librosa
 import numpy as np
-
+import random
 TARGET_SR = 44100
 
 def load_audio(file_path, sr=TARGET_SR):
@@ -14,6 +14,18 @@ def mix_stems(drums, vocals, bass, others):
     vocals = vocals[:min_len]
     bass = bass[:min_len]
     others = others[:min_len]
+
+    # w_drums  = random.uniform(0.5, 1.5)
+    # w_vocals = random.uniform(0.5, 1.5)
+    # w_bass   = random.uniform(0.5, 1.5)
+    # w_other  = random.uniform(0.5, 1.5)
+
+    # mix = (
+    #     w_drums * drums +
+    #     w_vocals * vocals +
+    #     w_bass * bass +
+    #     w_other * others
+    # )
 
     mix = (drums + vocals + bass + others)/4
 

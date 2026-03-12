@@ -1,49 +1,56 @@
 import torch
 from torch.utils.data import Dataset
-import random
-from mashup_generator import generate_mashup,add_noise,random_time_stretch,apply_random_gain
-from feature_extraction import mel_spectrogram
+import pandas as pd
+import numpy as np
+from pathlib import Path
+from utils import random_crop, center_crop
 
 class MashupDataset(Dataset):
 
-    def __init__(self, genre_paths, noise_files):
-        self.genre_paths = genre_paths
-        self.noise_files = noise_files
+    def __init__(self, metadata_csv, root_dir, train=True):
 
-        GENRES = [
-        "blues",
-        "classical",
-        "country",
-        "disco",
-        "hiphop",
-        "jazz",
-        "metal",
-        "pop",
-        "reggae",
-        "rock"
-        ]
+        self.metadata = pd.read_csv(metadata_csv)
+        self.root_dir = Path(root_dir)
+        self.train = train
 
-        GENRE_TO_ID = {genre: i for i, genre in enumerate(GENRES)}
-        ID_TO_GENRE = {i: genre for genre, i in GENRE_TO_ID.items()}
+
 
     def __len__(self):
-        return 10000
+        return len(self.metadata)
 
     def __getitem__(self, idx):
 
-        genre = random.choice(list(self.genre_paths.keys()))
-        genre_path = self.genre_paths[genre]
+        row = self.metadata.iloc[idx]
 
-        audio = generate_mashup(genre_path)
+        genre = row["genre"]
+        file = row["file"]
+        
+        spec_path = self.root_dir / file
+        
+        spec = np.load(spec_path)
+        
+        # Crop spectrogram
+        if self.train:
+            spec = random_crop(spec)
+        else:
+            spec = center_crop(spec)
 
-        audio = random_time_stretch(audio)
+        # convert to tensor
+        spec = torch.tensor(spec).unsqueeze(0).float()
 
-        audio = add_noise(audio, self.noise_files)
+        label = torch.tensor(row["label"]).long()
+        
+        return spec, label
+    
+augmented_data_path=Path(r'D:\Projects\DLGenAi Project\augmented_dataset')
+dataset = MashupDataset(
+    metadata_csv=augmented_data_path / "metadata.csv",
+    root_dir=augmented_data_path,
+    train=True
+)
 
-        mel = mel_spectrogram(audio)
+spec, label = dataset[0]
 
-        mel = torch.tensor(mel).unsqueeze(0)
-
-        label = self.GENRE_TO_ID[genre]
-
-        return mel.float(), label
+print(spec.shape)
+print(label)
+print(label.dtype)
