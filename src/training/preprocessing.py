@@ -15,19 +15,19 @@ def mix_stems(drums, vocals, bass, others):
     bass = bass[:min_len]
     others = others[:min_len]
 
-    # w_drums  = random.uniform(0.5, 1.5)
-    # w_vocals = random.uniform(0.5, 1.5)
-    # w_bass   = random.uniform(0.5, 1.5)
-    # w_other  = random.uniform(0.5, 1.5)
+    w_drums  = random.uniform(0.6, 1.5)
+    w_vocals = random.uniform(0.6, 1.5)
+    w_bass   = random.uniform(0.6, 1.5)
+    w_other  = random.uniform(0.6, 1.5)
 
-    # mix = (
-    #     w_drums * drums +
-    #     w_vocals * vocals +
-    #     w_bass * bass +
-    #     w_other * others
-    # )
+    mix = (
+        w_drums * drums +
+        w_vocals * vocals +
+        w_bass * bass +
+        w_other * others
+    )
 
-    mix = (drums + vocals + bass + others)/4
+    # mix = (drums + vocals + bass + others)/4
 
     mix = mix / np.max(np.abs(mix))
 

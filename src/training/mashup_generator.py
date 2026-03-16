@@ -2,7 +2,8 @@ import random
 from pathlib import Path
 import librosa
 import numpy as np
-from src.preprocessing import load_audio, mix_stems
+import os,sys
+from src.training.preprocessing  import load_audio, mix_stems
 
 def generate_mashup(genre_path):
     

@@ -13,8 +13,6 @@ class MashupDataset(Dataset):
         self.root_dir = Path(root_dir)
         self.train = train
 
-
-
     def __len__(self):
         return len(self.metadata)
 
@@ -26,7 +24,7 @@ class MashupDataset(Dataset):
         file = row["file"]
         
         spec_path = self.root_dir / file
-        
+        # print("Spec Path", spec_path)
         spec = np.load(spec_path)
         
         # Crop spectrogram
@@ -42,15 +40,15 @@ class MashupDataset(Dataset):
         
         return spec, label
     
-augmented_data_path=Path(r'D:\Projects\DLGenAi Project\augmented_dataset')
-dataset = MashupDataset(
-    metadata_csv=augmented_data_path / "metadata.csv",
-    root_dir=augmented_data_path,
-    train=True
-)
+# augmented_data_path=Path(r'D:\Projects\DLGenAi Project\augmented_dataset')
+# dataset = MashupDataset(
+#     metadata_csv=augmented_data_path / "metadata.csv",
+#     root_dir=augmented_data_path,
+#     train=True
+# )
 
-spec, label = dataset[0]
+# spec, label = dataset[200]
 
-print(spec.shape)
-print(label)
-print(label.dtype)
+# print(spec.shape)
+# print(label)
+# print(label.dtype)
