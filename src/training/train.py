@@ -61,31 +61,35 @@ def validate(model, loader):
     return f1
 
 def main():
-    augmented_data_path=Path(r'D:\Projects\DLGenAi Project\augmented_dataset')
+    dataset_path=Path(r'D:\Projects\DLGenAi Project\dataset\messy_mashup')
+#    from dataset import MashupDataset
+    stems_root="../../dataset/messy_mashup/genres_stems"
+    noise_root="../../dataset/messy_mashup/ESC-50-master/audio"
+    
     train_dataset = MashupDataset(
-        metadata_csv="train_metadata.csv",
-        root_dir=augmented_data_path,
-        train=True
+        stems_root=dataset_path / "genres_stems",
+        noise_root=dataset_path / "ESC-50-master/audio" ,
+        samples_per_epoch=20000
     )
 
     val_dataset = MashupDataset(
-        metadata_csv="val_metadata.csv",
-        root_dir=augmented_data_path,
-        train=False
+       stems_root=dataset_path / "genres_stems",
+        noise_root=dataset_path / "ESC-50-master/audio" ,
+        samples_per_epoch=3000
     )
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=16,
+        batch_size=8,
         shuffle=True,
-        num_workers=0
+        num_workers=2
     )
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=16,
+        batch_size=8,
         shuffle=False,
-        num_workers=0
+        num_workers=2
     )
     print("Dataset segreagated:")
 

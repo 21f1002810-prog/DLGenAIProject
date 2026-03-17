@@ -3,10 +3,10 @@ from pathlib import Path
 import librosa
 import numpy as np
 import os,sys
-from src.training.preprocessing  import load_audio, mix_stems
+from preprocessing  import load_audio, mix_stems
 
 def generate_mashup(genre_path):
-    
+    print("Genre Mashup:", genre_path)
     songs = list(genre_path.iterdir())
 
     s1, s2, s3, s4 = random.sample(songs, 4)
