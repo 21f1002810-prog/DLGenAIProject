@@ -44,6 +44,7 @@ class GenreCNN(nn.Module):
 
         self.fc = nn.Linear(256, num_classes)
         print("Layers layed")
+        
     def forward(self, x):
 
         x = self.block1(x)

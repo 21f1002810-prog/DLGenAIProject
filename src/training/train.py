@@ -7,7 +7,7 @@ from model import GenreCNN
 from pathlib import Path
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+print(DEVICE)
 def train_one_epoch(model, loader, optimizer, criterion):
 
     model.train()
@@ -16,7 +16,6 @@ def train_one_epoch(model, loader, optimizer, criterion):
     # print("loaderr:",loader)
     for specs, labels in loader:
         
-
         specs = specs.to(DEVICE)
         labels = labels.to(DEVICE)
 
@@ -31,6 +30,7 @@ def train_one_epoch(model, loader, optimizer, criterion):
         optimizer.step()
 
         total_loss += loss.item()
+        
         # print("Eond of train one epoch")
     return total_loss / len(loader)
 
@@ -61,16 +61,17 @@ def validate(model, loader):
     return f1
 
 def main():
-    dataset_path=Path(r'D:\Projects\DLGenAi Project\dataset\messy_mashup')
+    # dataset_path=Path(r'D:\Projects\DLGenAi Project\dataset\messy_mashup')
+    dataset_path=Path(r'/kaggle/input/jan-2026-dl-gen-ai-project/messy_mashup')
 #    from dataset import MashupDataset
-    stems_root="../../dataset/messy_mashup/genres_stems"
-    noise_root="../../dataset/messy_mashup/ESC-50-master/audio"
+
     
     train_dataset = MashupDataset(
         stems_root=dataset_path / "genres_stems",
         noise_root=dataset_path / "ESC-50-master/audio" ,
         samples_per_epoch=20000
     )
+    print("After train dataset")
 
     val_dataset = MashupDataset(
        stems_root=dataset_path / "genres_stems",
@@ -78,18 +79,42 @@ def main():
         samples_per_epoch=3000
     )
 
+    print("After val dataset")
+
+    # train_loader = DataLoader(
+    #     train_dataset,
+    #     batch_size=8,
+    #     shuffle=True,
+    #     num_workers=2
+    # )
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=8,
+        batch_size=16,          # increase if memory allows
         shuffle=True,
-        num_workers=2
+        num_workers=4,          # match CPU cores
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2
     )
+
+    print("After train loader")
+
+    # val_loader = DataLoader(
+    #     val_dataset,
+    #     batch_size=8,
+    #     shuffle=False,
+    #     num_workers=2
+    # )
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=8,
-        shuffle=False,
-        num_workers=2
+        batch_size=16,          # increase if memory allows
+        shuffle=True,
+        num_workers=4,          # match CPU cores
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2
     )
     print("Dataset segreagated:")
 
@@ -115,6 +140,7 @@ def main():
             criterion
         )
         print("After train loss")
+        
         val_f1 = validate(
             model,
             val_loader
