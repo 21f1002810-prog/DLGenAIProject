@@ -1,151 +1,144 @@
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from sklearn.metrics import f1_score
-from dataset import MashupDataset
-from model import GenreCNN
+from dataset import ChunkedDataset
+from model import SimpleCNN
 from pathlib import Path
+from torch.amp import autocast, GradScaler
+import numpy as np
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(DEVICE)
-def train_one_epoch(model, loader, optimizer, criterion):
+DEVICE=str(DEVICE)
+print("Using device:", DEVICE)
 
+# ---------------- TRAIN ----------------
+def train_one_epoch(model, loader, optimizer, criterion, scaler):
     model.train()
-    print("Model training started")
     total_loss = 0
-    # print("loaderr:",loader)
+
     for specs, labels in loader:
-        
         specs = specs.to(DEVICE)
         labels = labels.to(DEVICE)
 
         optimizer.zero_grad()
 
-        outputs = model(specs)
+        with autocast(device_type=DEVICE):
+            outputs = model(specs)
+            loss = criterion(outputs, labels)
 
-        loss = criterion(outputs, labels)
-
-        loss.backward()
-
-        optimizer.step()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
         total_loss += loss.item()
-        
-        # print("Eond of train one epoch")
+
     return total_loss / len(loader)
 
 
+# ---------------- VALIDATE ----------------
 def validate(model, loader):
-
     model.eval()
 
     all_preds = []
     all_labels = []
 
     with torch.no_grad():
-
         for specs, labels in loader:
-
             specs = specs.to(DEVICE)
             labels = labels.to(DEVICE)
 
             outputs = model(specs)
-
             preds = torch.argmax(outputs, dim=1)
 
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
 
-    f1 = f1_score(all_labels, all_preds, average="macro")
+    return f1_score(all_labels, all_preds, average="macro")
 
-    return f1
 
+# ---------------- MAIN ----------------
 def main():
-    # dataset_path=Path(r'D:\Projects\DLGenAi Project\dataset\messy_mashup')
-    dataset_path=Path(r'/kaggle/input/jan-2026-dl-gen-ai-project/messy_mashup')
-#    from dataset import MashupDataset
 
-    
-    train_dataset = MashupDataset(
-        stems_root=dataset_path / "genres_stems",
-        noise_root=dataset_path / "ESC-50-master/audio" ,
-        samples_per_epoch=20000
-    )
-    print("After train dataset")
+    dataset_path = Path("/kaggle/working/data/audio-genre-processed")
+    dataset = ChunkedDataset(dataset_path)
 
-    val_dataset = MashupDataset(
-       stems_root=dataset_path / "genres_stems",
-        noise_root=dataset_path / "ESC-50-master/audio" ,
-        samples_per_epoch=3000
-    )
+    # 🔴 FIXED split (deterministic)
+    indices = np.arange(len(dataset))
+    np.random.seed(42)
+    np.random.shuffle(indices)
 
-    print("After val dataset")
+    split = int(0.8 * len(indices))
+    train_idx, val_idx = indices[:split], indices[split:]
 
-    # train_loader = DataLoader(
-    #     train_dataset,
-    #     batch_size=8,
-    #     shuffle=True,
-    #     num_workers=2
-    # )
+    train_dataset = Subset(dataset, train_idx)
+    val_dataset = Subset(dataset, val_idx)
 
+    print(f"Train size: {len(train_dataset)}, Val size: {len(val_dataset)}")
+
+    # 🔴 FIX workers (Kaggle safe)
     train_loader = DataLoader(
         train_dataset,
-        batch_size=16,          # increase if memory allows
+        batch_size=64,
         shuffle=True,
-        num_workers=4,          # match CPU cores
+        num_workers=4,
         pin_memory=True,
-        persistent_workers=True,
-        prefetch_factor=2
+        persistent_workers=True
     )
-
-    print("After train loader")
-
-    # val_loader = DataLoader(
-    #     val_dataset,
-    #     batch_size=8,
-    #     shuffle=False,
-    #     num_workers=2
-    # )
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=16,          # increase if memory allows
-        shuffle=True,
-        num_workers=4,          # match CPU cores
-        pin_memory=True,
-        persistent_workers=True,
-        prefetch_factor=2
+        batch_size=64,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True
     )
-    print("Dataset segreagated:")
 
-    model = GenreCNN(num_classes=10).to(DEVICE)
+    # 🔴 Model
+    model = SimpleCNN(num_classes=10).to(DEVICE)
 
-    criterion = nn.CrossEntropyLoss()
-
+    # 🔴 Optimizer (with weight decay)
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=0.001
+        lr=5e-4,
+        weight_decay=1e-4
     )
 
+    # 🔴 Scheduler (CORRECT placement)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode='max',
+        factor=0.5,
+        patience=5
+    )
+
+    criterion = nn.CrossEntropyLoss()
+    scaler = GradScaler(device=DEVICE)
+
     epochs = 20
-
     best_f1 = 0
+    patience = 5
+    counter = 0
 
+    # 🔴 Sanity check
+    x, y = next(iter(train_loader))
+    print("Sample batch shape:", x.shape)
+
+    # ---------------- TRAIN LOOP ----------------
     for epoch in range(epochs):
-        print("Epochs started")
+
         train_loss = train_one_epoch(
             model,
             train_loader,
             optimizer,
-            criterion
+            criterion,
+            scaler
         )
-        print("After train loss")
-        
-        val_f1 = validate(
-            model,
-            val_loader
-        )
-        print("After validate")
+
+        val_f1 = validate(model, val_loader)
+
+        # 🔴 CORRECT scheduler usage
+        scheduler.step(val_f1)
 
         print(
             f"Epoch {epoch+1}/{epochs} | "
@@ -153,16 +146,24 @@ def main():
             f"Val Macro F1: {val_f1:.4f}"
         )
 
+        # 🔴 Early stopping + checkpoint
         if val_f1 > best_f1:
-
             best_f1 = val_f1
+            counter = 0
 
-            torch.save(
-                model.state_dict(),
-                "best_model.pth"
-            )
-
+            torch.save(model.state_dict(), "best_model.pth")
             print("Model checkpoint saved!")
+
+        else:
+            counter += 1
+            print(f"No improvement. Early stop counter: {counter}/{patience}")
+
+            if counter >= patience:
+                print("Early stopping triggered!")
+                break
+
+    print("Training complete!")
+
 
 if __name__ == "__main__":
     main()

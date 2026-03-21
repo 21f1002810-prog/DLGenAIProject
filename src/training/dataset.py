@@ -1,60 +1,60 @@
-import torch
-from torch.utils.data import Dataset
-import numpy as np
-import random
-from pathlib import Path
+# import torch
+# from torch.utils.data import Dataset
+# import numpy as np
+# import random
+# from pathlib import Path
 
-from mashup_generator import generate_mashup
-from preprocessing import random_time_stretch, add_noise, mel_spectrogram
-from feature_extraction import mel_spectrogram
-from utils import random_crop
+# from mashup_generator import generate_mashup
+# from preprocessing import random_time_stretch, add_noise, mel_spectrogram
+# from feature_extraction import mel_spectrogram
+# from utils import random_crop
 
-GENRES = [
-    "blues","classical","country","disco","hiphop",
-    "jazz","metal","pop","reggae","rock"
-]
+# GENRES = [
+#     "blues","classical","country","disco","hiphop",
+#     "jazz","metal","pop","reggae","rock"
+# ]
 
-class MashupDataset(Dataset):
+# class MashupDataset(Dataset):
 
-    def __init__(self, stems_root, noise_root, samples_per_epoch=20000):
+#     def __init__(self, stems_root, noise_root, samples_per_epoch=20000):
 
-        self.stems_root = Path(stems_root)
-        self.noise_files = list(Path(noise_root).glob("**/*.wav"))
-        self.samples_per_epoch = samples_per_epoch
+#         self.stems_root = Path(stems_root)
+#         self.noise_files = list(Path(noise_root).glob("**/*.wav"))
+#         self.samples_per_epoch = samples_per_epoch
 
-    def __len__(self):
-        return self.samples_per_epoch
+#     def __len__(self):
+#         return self.samples_per_epoch
 
-    def __getitem__(self, idx):
+#     def __getitem__(self, idx):
 
-        # pick random genre
-        genre = random.choice(GENRES)
-        genre_path = self.stems_root / genre
+#         # pick random genre
+#         genre = random.choice(GENRES)
+#         genre_path = self.stems_root / genre
 
-        # generate mashup
-        audio = generate_mashup(genre_path)
+#         # generate mashup
+#         audio = generate_mashup(genre_path)
 
-        # tempo augmentation
-        audio = random_time_stretch(audio)
+#         # tempo augmentation
+#         audio = random_time_stretch(audio)
 
-        # noise augmentation
-        if random.random() < 0.7:
-            audio = add_noise(audio, self.noise_files)
+#         # noise augmentation
+#         if random.random() < 0.7:
+#             audio = add_noise(audio, self.noise_files)
 
-        # spectrogram
-        spec = mel_spectrogram(audio)
+#         # spectrogram
+#         spec = mel_spectrogram(audio)
 
-        # crop
-        spec = random_crop(spec)
+#         # crop
+#         spec = random_crop(spec)
 
-        spec = torch.tensor(spec).unsqueeze(0).float()
+#         spec = torch.tensor(spec).unsqueeze(0).float()
 
-        label = GENRES.index(genre)
-        label = torch.tensor(label).long()
-        # print(genre_path)
-        # print(spec,label)
-        # print("\n")
-        return spec, label
+#         label = GENRES.index(genre)
+#         label = torch.tensor(label).long()
+#         # print(genre_path)
+#         # print(spec,label)
+#         # print("\n")
+#         return spec, label
 
 # import torch
 # from torch.utils.data import Dataset
@@ -162,3 +162,33 @@ class MashupDataset(Dataset):
 #         label = torch.tensor(label).long()
 
 #         return spec, label
+
+
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+import os
+
+class ChunkedDataset(Dataset):
+    def __init__(self, folder):
+        self.data_files = sorted([f for f in os.listdir(folder) if f.startswith("data_")])
+        self.label_files = sorted([f for f in os.listdir(folder) if f.startswith("labels_")])
+        self.folder = folder
+        
+
+        self.data = [np.load(os.path.join(folder, f), mmap_mode='r') for f in self.data_files]
+        self.labels = [np.load(os.path.join(folder, f)) for f in self.label_files]
+
+        self.index_map = []
+        for i, d in enumerate(self.data):
+            for j in range(len(d)):
+                self.index_map.append((i, j))
+
+    def __len__(self):
+        return len(self.index_map)
+
+    def __getitem__(self, idx):
+        file_idx, sample_idx = self.index_map[idx]
+        x = torch.tensor(self.data[file_idx][sample_idx], dtype=torch.float32)
+        y = torch.tensor(self.labels[file_idx][sample_idx], dtype=torch.long)
+        return x, y
