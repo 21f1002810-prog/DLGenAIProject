@@ -61,18 +61,22 @@ def validate(model, loader):
 def main():
 
     dataset_path = Path("/kaggle/working/data/audio-genre-processed")
-    dataset = ChunkedDataset(dataset_path)
+    # dataset = ChunkedDataset(dataset_path)
+    full_dataset = ChunkedDataset(dataset_path, train=True)
 
     # 🔴 FIXED split (deterministic)
-    indices = np.arange(len(dataset))
+    indices = np.arange(len(full_dataset))
     np.random.seed(42)
     np.random.shuffle(indices)
 
     split = int(0.8 * len(indices))
     train_idx, val_idx = indices[:split], indices[split:]
 
-    train_dataset = Subset(dataset, train_idx)
-    val_dataset = Subset(dataset, val_idx)
+    train_dataset = Subset(full_dataset, train_idx)
+    val_dataset = Subset(
+    ChunkedDataset(dataset_path, train=False),
+    val_idx
+        )
 
     print(f"Train size: {len(train_dataset)}, Val size: {len(val_dataset)}")
 
@@ -100,8 +104,8 @@ def main():
     # 🔴 Optimizer (with weight decay)
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=5e-4,
-        weight_decay=1e-4
+          lr=3e-4,
+        weight_decay=3e-4
     )
 
     # 🔴 Scheduler (CORRECT placement)
@@ -109,15 +113,15 @@ def main():
         optimizer,
         mode='max',
         factor=0.5,
-        patience=5
+        patience=10
     )
 
     criterion = nn.CrossEntropyLoss()
     scaler = GradScaler(device=DEVICE)
 
-    epochs = 20
+    epochs = 40
     best_f1 = 0
-    patience = 5
+    patience = 10
     counter = 0
 
     # 🔴 Sanity check
