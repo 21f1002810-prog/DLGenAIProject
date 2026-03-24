@@ -1,37 +1,46 @@
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
+from transformers import ASTForAudioClassification
 from sklearn.metrics import f1_score
+import numpy as np
 from pathlib import Path
+from torch.cuda.amp import autocast, GradScaler
 from tqdm import tqdm
-
-from transformers import AutoModelForAudioClassification
 
 from ast_dataset import ASTDataset
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Device:", DEVICE)
 
 
-def train_one_epoch(model, loader, optimizer, scaler):
+# ---------------- TRAIN ----------------
+def train_epoch(model, loader, optimizer, scaler):
 
     model.train()
+
     total_loss = 0
 
-    loop = tqdm(loader, desc="Training")
+    loop = tqdm(loader)
 
-    for inputs, labels in loop:
+    for x, y in loop:
 
-        inputs = inputs.to(DEVICE)
-        labels = labels.to(DEVICE)
+        x = x.to(DEVICE)
+        y = y.to(DEVICE)
 
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
 
-        with torch.cuda.amp.autocast():
-            outputs = model(inputs)
-            loss = nn.CrossEntropyLoss()(outputs.logits, labels)
+        with autocast():
+
+            outputs = model(x)
+
+            loss = nn.CrossEntropyLoss()(outputs.logits, y)
 
         scaler.scale(loss).backward()
+
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
         scaler.step(optimizer)
         scaler.update()
 
@@ -42,98 +51,124 @@ def train_one_epoch(model, loader, optimizer, scaler):
     return total_loss / len(loader)
 
 
+# ---------------- VALIDATE ----------------
 def validate(model, loader):
 
     model.eval()
 
-    all_preds = []
-    all_labels = []
+    preds = []
+    labels = []
 
     with torch.no_grad():
 
-        for inputs, labels in tqdm(loader, desc="Validation"):
+        for x, y in tqdm(loader):
 
-            inputs = inputs.to(DEVICE)
-            labels = labels.to(DEVICE)
+            x = x.to(DEVICE)
 
-            outputs = model(inputs)
-            preds = torch.argmax(outputs.logits, dim=1)
+            outputs = model(x)
 
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
+            p = torch.argmax(outputs.logits, dim=1)
 
-    return f1_score(all_labels, all_preds, average="macro")
+            preds.extend(p.cpu().numpy())
+            labels.extend(y.numpy())
+
+    return f1_score(labels, preds, average="macro")
 
 
+# ---------------- MAIN ----------------
 def main():
 
-    project_root = Path(__file__).resolve().parents[2]
+    dataset_path = "/kaggle/input/datasets/sudhanwaabokadee/audio-genre-processed"
 
-    stems_root = project_root / "dataset" / "genres_stems"
+    full_dataset = ASTDataset(dataset_path, train=True)
 
-    train_dataset = ASTDataset(stems_root, samples_per_epoch=8000)
-    val_dataset   = ASTDataset(stems_root, samples_per_epoch=2000)
+    # split
+    idx = np.arange(len(full_dataset))
+    np.random.seed(42)
+    np.random.shuffle(idx)
+
+    split = int(0.8 * len(idx))
+
+    train_idx = idx[:split]
+    val_idx = idx[split:]
+
+    train_dataset = Subset(full_dataset, train_idx)
+
+    val_dataset = Subset(
+        ASTDataset(dataset_path, train=False),
+        val_idx
+    )
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=4,   # SAFE
+        batch_size=8,
         shuffle=True,
-        num_workers=0
+        num_workers=2,
+        pin_memory=True
     )
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=4,
+        batch_size=8,
         shuffle=False,
-        num_workers=0
+        num_workers=2,
+        pin_memory=True
     )
 
-    model = AutoModelForAudioClassification.from_pretrained(
-        "MIT/ast-finetuned-audioset-10-10-0.4593",
-        num_labels=10
-    ).to(DEVICE)
+    model = ASTForAudioClassification.from_pretrained(
+    "MIT/ast-finetuned-audioset-10-10-0.4593",
+    num_labels=10,
+    ignore_mismatched_sizes=True
+    )
+    model = model.to(DEVICE)
 
-    # Phase 1: Freeze backbone
-    for param in model.base_model.parameters():
-        param.requires_grad = False
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=2e-5,
+        weight_decay=1e-4
+    )
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=2e-5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=20
+    )
 
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = GradScaler()
 
     best_f1 = 0
 
-    print("\n--- Phase 1: Training classifier ---")
+    epochs = 20
 
-    for epoch in range(5):
+    for epoch in range(epochs):
 
-        train_loss = train_one_epoch(model, train_loader, optimizer, scaler)
+        print(f"\nEpoch {epoch+1}/{epochs}")
+
+        train_loss = train_epoch(
+            model,
+            train_loader,
+            optimizer,
+            scaler
+        )
+
         val_f1 = validate(model, val_loader)
 
-        print(f"Epoch {epoch+1} | Loss: {train_loss:.4f} | F1: {val_f1:.4f}")
+        scheduler.step()
+
+        print(f"Train Loss: {train_loss:.4f}")
+        print(f"Val Macro F1: {val_f1:.4f}")
 
         if val_f1 > best_f1:
+
             best_f1 = val_f1
-            torch.save(model.state_dict(), "ast_best.pth")
 
-    # Phase 2: Unfreeze everything
-    print("\n--- Phase 2: Full fine-tuning ---")
+            torch.save(
+                model.state_dict(),
+                "ast_best.pth"
+            )
 
-    for param in model.parameters():
-        param.requires_grad = True
+            print("Model saved")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
-
-    for epoch in range(10):
-
-        train_loss = train_one_epoch(model, train_loader, optimizer, scaler)
-        val_f1 = validate(model, val_loader)
-
-        print(f"Epoch {epoch+1} | Loss: {train_loss:.4f} | F1: {val_f1:.4f}")
-
-        if val_f1 > best_f1:
-            best_f1 = val_f1
-            torch.save(model.state_dict(), "ast_best.pth")
+    print("Best F1:", best_f1)
 
 
 if __name__ == "__main__":

@@ -1,50 +1,91 @@
+import numpy as np
 import torch
 from torch.utils.data import Dataset
-import random
-from pathlib import Path
-import librosa
+import os
+import re
 
-from transformers import AutoFeatureExtractor
-from mashup_generator import generate_mashup
 
-GENRES = [
-    "blues","classical","country","disco","hiphop",
-    "jazz","metal","pop","reggae","rock"
-]
+def spec_augment(spec, time_mask=40, freq_mask=20):
+
+    spec = spec.copy()
+
+    F, T = spec.shape
+
+    # time mask
+    t = np.random.randint(0, time_mask)
+    if T - t > 0:
+        t0 = np.random.randint(0, T - t)
+        spec[:, t0:t0+t] = spec.mean()
+
+    # freq mask
+    f = np.random.randint(0, freq_mask)
+    if F - f > 0:
+        f0 = np.random.randint(0, F - f)
+        spec[f0:f0+f, :] = spec.mean()
+
+    return spec
+
 
 class ASTDataset(Dataset):
 
-    def __init__(self, stems_root, samples_per_epoch=10000):
+    def __init__(self, folder, train=True):
 
-        self.stems_root = Path(stems_root)
-        self.samples_per_epoch = samples_per_epoch
+        self.train = train
 
-        # Load once → avoids repeated downloads
-        self.feature_extractor = AutoFeatureExtractor.from_pretrained(
-            "MIT/ast-finetuned-audioset-10-10-0.4593"
-        )
+        data_files = {}
+        label_files = {}
+
+        for f in os.listdir(folder):
+
+            if f.startswith("data_"):
+                idx = int(re.findall(r"\d+", f)[0])
+                data_files[idx] = os.path.join(folder, f)
+
+            if f.startswith("labels_"):
+                idx = int(re.findall(r"\d+", f)[0])
+                label_files[idx] = os.path.join(folder, f)
+
+        common_idx = sorted(set(data_files) & set(label_files))
+
+        self.data = []
+        self.labels = []
+
+        for i in common_idx:
+
+            d = np.load(data_files[i], mmap_mode="r")
+            l = np.load(label_files[i], mmap_mode="r")
+
+            self.data.append(d)
+            self.labels.append(l)
+
+        self.index_map = []
+
+        for file_idx in range(len(self.data)):
+
+            n = len(self.data[file_idx])
+
+            for sample_idx in range(n):
+
+                self.index_map.append((file_idx, sample_idx))
+
+        print("Total samples:", len(self.index_map))
 
     def __len__(self):
-        return self.samples_per_epoch
+        return len(self.index_map)
 
     def __getitem__(self, idx):
 
-        genre = random.choice(GENRES)
-        genre_path = self.stems_root / genre
+        file_idx, sample_idx = self.index_map[idx]
 
-        audio = generate_mashup(genre_path)
+        spec = self.data[file_idx][sample_idx].astype(np.float32)
+        label = int(self.labels[file_idx][sample_idx])
 
-        # CRITICAL: resample to 16kHz
-        audio = librosa.resample(audio, orig_sr=44100, target_sr=16000)
+        # normalize
+        spec = (spec - spec.mean()) / (spec.std() + 1e-6)
 
-        inputs = self.feature_extractor(
-            audio,
-            sampling_rate=16000,
-            return_tensors="pt"
-        )
+        if self.train:
+            spec = spec_augment(spec)
 
-        input_values = inputs["input_values"].squeeze(0)
+        spec = torch.tensor(spec)
 
-        label = GENRES.index(genre)
-
-        return input_values, torch.tensor(label).long()
+        return spec, torch.tensor(label).long()
