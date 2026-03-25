@@ -101,18 +101,20 @@ def main():
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=8,
+        batch_size=12,
         shuffle=True,
-        num_workers=2,
-        pin_memory=True
+        num_workers=4,
+        pin_memory=True,
+        persistent_workers=True
     )
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=8,
+        batch_size=12,
         shuffle=False,
-        num_workers=2,
-        pin_memory=True
+        num_workers=4,
+        pin_memory=True,
+        persistent_workers=True
     )
 
     model = ASTForAudioClassification.from_pretrained(
