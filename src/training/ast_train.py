@@ -2,11 +2,12 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 from transformers import ASTForAudioClassification
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, accuracy_score
 import numpy as np
 from pathlib import Path
 from torch.cuda.amp import autocast, GradScaler
 from tqdm import tqdm
+import wandb
 
 from ast_dataset import ASTDataset
 
@@ -72,11 +73,29 @@ def validate(model, loader):
             preds.extend(p.cpu().numpy())
             labels.extend(y.numpy())
 
-    return f1_score(labels, preds, average="macro")
+    f1 = f1_score(labels, preds, average="macro")
+    acc = accuracy_score(labels, preds)
+
+    return f1, acc
 
 
 # ---------------- MAIN ----------------
 def main():
+
+    wandb.init(
+    project="21f1002810-t12026",
+    name="ast_model_run",
+    config={
+        "model": "AST",
+        "epochs": 12,
+        "batch_size": 12,
+        "optimizer": "AdamW",
+        "lr": 2e-5,
+        "scheduler": "CosineAnnealingLR"
+    }
+    )
+    # wandb.watch(model, log=None)
+    
 
     dataset_path = "/kaggle/input/datasets/sudhanwaabokadee/audio-genre-processed"
 
@@ -139,7 +158,7 @@ def main():
 
     best_f1 = 0
 
-    epochs = 20
+    epochs = 12
 
     for epoch in range(epochs):
 
@@ -152,25 +171,36 @@ def main():
             scaler
         )
 
-        val_f1 = validate(model, val_loader)
+        val_f1, val_acc = validate(model, val_loader)
 
         scheduler.step()
 
         print(f"Train Loss: {train_loss:.4f}")
         print(f"Val Macro F1: {val_f1:.4f}")
 
+        wandb.log({
+            "epoch": epoch + 1,
+            "train_loss": train_loss,
+            "val_f1": val_f1,
+            "val_accuracy": val_acc,
+            "learning_rate": optimizer.param_groups[0]["lr"]
+        })
+
         if val_f1 > best_f1:
 
             best_f1 = val_f1
 
             torch.save(
-                model.state_dict(),
-                "ast_best.pth"
+            model.state_dict(),
+            "ast_best.pth"
             )
+
+            wandb.save("ast_best.pth")
 
             print("Model saved")
 
     print("Best F1:", best_f1)
+    wandb.finish()
 
 
 if __name__ == "__main__":

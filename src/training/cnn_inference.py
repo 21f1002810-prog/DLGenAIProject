@@ -1,10 +1,10 @@
 import torch
-import torch.nn.functional as F
+import torch.nn as nn
 import librosa
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from transformers import ASTForAudioClassification
+from model  import SimpleCNN
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", DEVICE)
@@ -15,8 +15,6 @@ N_FFT = 2048
 HOP = 512
 N_MELS = 128
 TARGET_LEN = 1024
-NUM_CLASSES = 10
-
 
 # ---------------- FEATURE EXTRACTION ----------------
 def wav_to_spectrogram(file_path):
@@ -31,14 +29,12 @@ def wav_to_spectrogram(file_path):
         n_mels=N_MELS
     )
 
-    mel_db = librosa.power_to_db(mel).astype(np.float32)
+    mel_db = librosa.power_to_db(mel)
 
-    mel_db = (mel_db - np.mean(mel_db)) / (np.std(mel_db) + 1e-6)
-
-    return mel_db.astype(np.float32)
+    return mel_db
 
 
-# ---------------- MULTI CROP (TTA) ----------------
+# ---------------- MULTI CROP ----------------
 def get_crops(spec):
 
     T = spec.shape[1]
@@ -63,21 +59,15 @@ def get_crops(spec):
     return crops
 
 
-# ---------------- LOAD MODEL ----------------
-model = ASTForAudioClassification.from_pretrained(
-    "MIT/ast-finetuned-audioset-10-10-0.4593",
-    num_labels=NUM_CLASSES,
-    ignore_mismatched_sizes=True
-)
+# ---------------- MODEL ----------------
+num_classes = 10
 
-model.load_state_dict(
-    torch.load(
-        "/kaggle/input/datasets/sudhanwaabokadee/ast-model/ast_best.pth",
-        map_location=DEVICE
-    )
-)
+model = SimpleCNN(num_classes=num_classes).to(DEVICE)
+model.load_state_dict(torch.load(
+    "/kaggle/input/datasets/sudhanwaabokadee/cnn-model/best_model.pth",
+    map_location=DEVICE
+))
 
-model.to(DEVICE)
 model.eval()
 
 
@@ -96,7 +86,7 @@ genre_labels = [
 ]
 
 
-# ---------------- LOAD TEST DATA ----------------
+# ---------------- LOAD TEST ----------------
 test_csv = pd.read_csv(
     "/kaggle/input/jan-2026-dl-gen-ai-project/messy_mashup/test.csv"
 )
@@ -117,25 +107,23 @@ for _, row in test_csv.iterrows():
 
     crops = get_crops(spec)
 
-    probs = []
+    outputs = []
 
     with torch.no_grad():
 
         for c in crops:
 
-            tensor = torch.tensor(c).unsqueeze(0).to(DEVICE)
+            tensor = torch.tensor(c, dtype=torch.float32)\
+            .unsqueeze(0)\
+            .to(DEVICE)
 
-            outputs = model(tensor)
+            out = model(tensor)
 
-            logits = outputs.logits
+            outputs.append(out)
 
-            p = F.softmax(logits, dim=1)
+    outputs = torch.stack(outputs).mean(dim=0)
 
-            probs.append(p)
-
-    probs = torch.stack(probs).mean(dim=0)
-
-    pred = torch.argmax(probs, dim=1).item()
+    pred = torch.argmax(outputs, dim=1).item()
 
     predictions.append(genre_labels[pred])
 
@@ -146,6 +134,6 @@ submission = pd.DataFrame({
     "genre": predictions
 })
 
-submission.to_csv("ast_submission.csv", index=False)
+submission.to_csv("cnn_submission.csv", index=False)
 
 print("submission.csv created successfully!")

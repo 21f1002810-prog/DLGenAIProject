@@ -1,12 +1,13 @@
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, accuracy_score
 from dataset import ChunkedDataset
 from model import SimpleCNN
 from pathlib import Path
 from torch.amp import autocast, GradScaler
 import numpy as np
+import wandb
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEVICE=str(DEVICE)
@@ -54,13 +55,26 @@ def validate(model, loader):
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
 
-    return f1_score(all_labels, all_preds, average="macro")
+    f1 = f1_score(all_labels, all_preds, average="macro")
+    acc = accuracy_score(all_labels, all_preds)
 
-
+    return f1, acc
 # ---------------- MAIN ----------------
 def main():
+    wandb.init(
+    project="21f1002810-t12026",
+    name="cnn_model_run",
+    config={
+        "model": "SimpleCNN",
+        "epochs": 40,
+        "batch_size": 64,
+        "optimizer": "Adam",
+        "lr": 3e-4,
+        "scheduler": "ReduceLROnPlateau"
+    }
+    )
 
-    dataset_path = Path("/kaggle/working/data/audio-genre-processed")
+    dataset_path = Path("/kaggle/input/datasets/sudhanwaabokadee/audio-genre-processed")
     # dataset = ChunkedDataset(dataset_path)
     full_dataset = ChunkedDataset(dataset_path, train=True)
 
@@ -139,16 +153,24 @@ def main():
             scaler
         )
 
-        val_f1 = validate(model, val_loader)
+        val_f1, val_acc = validate(model, val_loader)
 
         # 🔴 CORRECT scheduler usage
         scheduler.step(val_f1)
 
         print(
-            f"Epoch {epoch+1}/{epochs} | "
-            f"Train Loss: {train_loss:.4f} | "
-            f"Val Macro F1: {val_f1:.4f}"
+        f"Epoch {epoch+1}/{epochs} | "
+        f"Train Loss: {train_loss:.4f} | "
+        f"Val Macro F1: {val_f1:.4f}"
         )
+
+        wandb.log({
+            "epoch": epoch + 1,
+            "train_loss": train_loss,
+            "val_f1": val_f1,
+            "val_accuracy": val_acc,
+            "learning_rate": optimizer.param_groups[0]["lr"]
+        })
 
         # 🔴 Early stopping + checkpoint
         if val_f1 > best_f1:
@@ -156,6 +178,7 @@ def main():
             counter = 0
 
             torch.save(model.state_dict(), "best_model.pth")
+            wandb.save("best_model.pth")
             print("Model checkpoint saved!")
 
         else:
@@ -167,6 +190,7 @@ def main():
                 break
 
     print("Training complete!")
+    wandb.finish()
 
 
 if __name__ == "__main__":
